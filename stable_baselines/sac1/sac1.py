@@ -12,7 +12,7 @@ from stable_baselines.common.vec_env import VecEnv
 from stable_baselines.common.math_util import unscale_action, scale_action
 from stable_baselines.deepq.replay_buffer import ReplayBuffer
 from stable_baselines.ppo2.ppo2 import safe_mean, get_schedule_fn
-from stable_baselines.sac.policies import SACPolicy
+from stable_baselines.sac1.policies import SACPolicy
 from stable_baselines import logger
 
 
@@ -26,7 +26,7 @@ def get_vars(scope):
     return tf_util.get_trainable_vars(scope)
 
 
-class SAC(OffPolicyRLModel):
+class SAC1(OffPolicyRLModel):
     """
     Soft Actor-Critic (SAC)
     Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor,
@@ -79,7 +79,7 @@ class SAC(OffPolicyRLModel):
                  _init_setup_model=True, policy_kwargs=None, full_tensorboard_log=False,
                  seed=None, n_cpu_tf_sess=None):
 
-        super(SAC, self).__init__(policy=policy, env=env, replay_buffer=None, verbose=verbose,
+        super(SAC1, self).__init__(policy=policy, env=env, replay_buffer=None, verbose=verbose,
                                   policy_base=SACPolicy, requires_vec_env=False, policy_kwargs=policy_kwargs,
                                   seed=seed, n_cpu_tf_sess=n_cpu_tf_sess)
 
@@ -178,15 +178,16 @@ class SAC(OffPolicyRLModel):
                     # policy_out corresponds to stochastic actions, used for training
                     # logp_pi is the log probability of actions taken by the policy
                     self.deterministic_action, policy_out, logp_pi = self.policy_tf.make_actor(self.processed_obs_ph)
+                    _, policy_out_, logp_pi_ = self.target_policy.make_actor(self.next_observations_ph, reuse=True)  # log pi(.|s')
                     # Monitor the entropy of the policy,
                     # this is not used for training
                     self.entropy = tf.reduce_mean(self.policy_tf.entropy)
                     #  Use two Q-functions to improve performance by reducing overestimation bias.
-                    qf1, qf2, value_fn = self.policy_tf.make_critics(self.processed_obs_ph, self.actions_ph,
-                                                                     create_qf=True, create_vf=True)  # Q(s,a)
+                    qf1, qf2, _ = self.policy_tf.make_critics(self.processed_obs_ph, self.actions_ph,
+                                                                     create_qf=True, create_vf=False)  # Q_i(s,a)
                     qf1_pi, qf2_pi, _ = self.policy_tf.make_critics(self.processed_obs_ph,
                                                                     policy_out, create_qf=True, create_vf=False,
-                                                                    reuse=True)  # Q(s, pi(a|s))
+                                                                    reuse=True)  # Q_i(s, pi(a|s))
 
                     # Target entropy is used when learning the entropy coefficient
                     if self.target_entropy == 'auto':
@@ -218,19 +219,22 @@ class SAC(OffPolicyRLModel):
 
                 with tf.variable_scope("target", reuse=False):
                     # Create the value network
-                    _, _, value_target = self.target_policy.make_critics(self.processed_next_obs_ph,
-                                                                         create_qf=False, create_vf=True)
-                    self.value_target = value_target
+                    # _, _, value_target = self.target_policy.make_critics(self.processed_next_obs_ph,
+                    #                                                      create_qf=False, create_vf=True)
+                    # Q_i(pi(.|s'))
+                    qf1_pi_, qf2_pi_, _ = self.target_policy.make_critics(self.processed_next_obs_ph, policy_out_,
+                                                                      create_qf=True, create_vf=False, reuse=False)
+
+                    # self.value_target = value_target
+                    # self.value_target =
 
                 with tf.variable_scope("loss", reuse=False):
                     # Take the min of the two Q-Values (Double-Q Learning)
-                    min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
-
+                    min_qf_pi = tf.minimum(qf1_pi_, qf2_pi_)
+                    # stop gradient for Q-target because it shouldn't update
+                    self.value_target = tf.stop_gradient(min_qf_pi - self.ent_coef * logp_pi_)
                     # Target for Q value regression
-                    q_backup = tf.stop_gradient(
-                        self.rewards_ph +
-                        (1 - self.terminals_ph) * self.gamma * self.value_target
-                    )
+                    q_backup = self.rewards_ph + (1 - self.terminals_ph) * self.gamma * self.value_target
 
                     # Compute Q-Function loss
                     # TODO: test with huber loss (it would avoid too high values)
@@ -259,10 +263,11 @@ class SAC(OffPolicyRLModel):
                     # Target for value fn regression
                     # We update the vf towards the min of two Q-functions in order to
                     # reduce overestimation bias from function approximation error.
-                    v_backup = tf.stop_gradient(min_qf_pi - self.ent_coef * logp_pi)
-                    value_loss = 0.5 * tf.reduce_mean((value_fn - v_backup) ** 2)
+                    # v_backup = tf.stop_gradient(min_qf_pi - self.ent_coef * logp_pi)
+                    # value_loss = 0.5 * tf.reduce_mean((value_fn - v_backup) ** 2)
 
-                    values_losses = qf1_loss + qf2_loss + value_loss
+                    values_losses = qf1_loss + qf2_loss
+                    # values_losses = qf1_loss + qf2_loss + value_loss
 
                     # Policy train op
                     # (has to be separate from value train op, because min_qf_pi appears in policy_loss)
@@ -273,8 +278,8 @@ class SAC(OffPolicyRLModel):
                     value_optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate_ph)
                     values_params = get_vars('model/values_fn')
 
-                    source_params = get_vars("model/values_fn/vf")
-                    target_params = get_vars("target/values_fn/vf")
+                    source_params = get_vars("model/values_fn")
+                    target_params = get_vars("target/values_fn")   # TODO:check bugs
 
                     # Polyak averaging for target variables
                     self.target_update_op = [
@@ -294,9 +299,13 @@ class SAC(OffPolicyRLModel):
 
                         self.infos_names = ['policy_loss', 'qf1_loss', 'qf2_loss', 'value_loss', 'entropy']
                         # All ops to call during one training step
-                        self.step_ops = [policy_loss, qf1_loss, qf2_loss,
-                                         value_loss, qf1, qf2, value_fn, logp_pi,
+                        self.step_ops = [policy_loss, qf1_loss, qf2_loss, values_losses,
+                                         qf1, qf2, logp_pi,
                                          self.entropy, policy_train_op, train_values_op]
+
+                        # self.step_ops = [policy_loss, qf1_loss, qf2_loss,
+                        #                  value_loss, qf1, qf2, value_fn, logp_pi,
+                        #                  self.entropy, policy_train_op, train_values_op]
 
                         # Add entropy coefficient optimization operation if needed
                         if ent_coef_loss is not None:
@@ -309,7 +318,7 @@ class SAC(OffPolicyRLModel):
                     tf.summary.scalar('policy_loss', policy_loss)
                     tf.summary.scalar('qf1_loss', qf1_loss)
                     tf.summary.scalar('qf2_loss', qf2_loss)
-                    tf.summary.scalar('value_loss', value_loss)
+                    # tf.summary.scalar('value_loss', value_loss)
                     tf.summary.scalar('entropy', self.entropy)
                     if ent_coef_loss is not None:
                         tf.summary.scalar('ent_coef_loss', ent_coef_loss)
@@ -319,7 +328,7 @@ class SAC(OffPolicyRLModel):
 
                 # Retrieve parameters that must be saved
                 self.params = get_vars("model")
-                self.target_params = get_vars("target/values_fn/vf")
+                self.target_params = get_vars("target/values_fn")
 
                 # Initialize Variables and target network
                 with self.sess.as_default():
@@ -345,7 +354,9 @@ class SAC(OffPolicyRLModel):
         # out  = [policy_loss, qf1_loss, qf2_loss,
         #         value_loss, qf1, qf2, value_fn, logp_pi,
         #         self.entropy, policy_train_op, train_values_op]
-
+        # self.step_ops = [policy_loss, qf1_loss, qf2_loss, values_losses,
+        #                  qf1, qf2, logp_pi,
+        #                  self.entropy, policy_train_op, train_values_op]
         # Do one gradient step
         # and optionally compute log for tensorboard
         if writer is not None:
@@ -358,7 +369,7 @@ class SAC(OffPolicyRLModel):
         # Unpack to monitor losses and entropy
         policy_loss, qf1_loss, qf2_loss, value_loss, *values = out
         # qf1, qf2, value_fn, logp_pi, entropy, *_ = values
-        entropy = values[4]
+        entropy = values[3]
 
         if self.log_ent_coef is not None:
             ent_coef_loss, ent_coef = values[-2:]
@@ -487,6 +498,7 @@ class SAC(OffPolicyRLModel):
                     fps = int(step / (time.time() - start_time))
                     logger.logkv("episodes", num_episodes)
                     logger.logkv("mean 100 episode reward", mean_reward)
+                    logger.logkv("episode reward", episode_rewards[-2])
                     if len(ep_info_buf) > 0 and len(ep_info_buf[0]) > 0:
                         logger.logkv('ep_rewmean', safe_mean([ep_info['r'] for ep_info in ep_info_buf]))
                         logger.logkv('eplenmean', safe_mean([ep_info['l'] for ep_info in ep_info_buf]))

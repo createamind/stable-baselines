@@ -231,8 +231,8 @@ class FeedForwardPolicy(SACPolicy):
 
         self.std = std = tf.exp(log_std)
         # Reparameterization trick
-        pi_ = mu_ + tf.random_normal(tf.shape(mu_)) * std
-        logp_pi = gaussian_likelihood(pi_, mu_, log_std)
+        pi_ = mu_ + tf.random_normal(tf.shape(mu_)) * std     # a ~ pi(a|s)
+        logp_pi = gaussian_likelihood(pi_, mu_, log_std)      # log-likelihood for sampled action pi, log pi(a|s)
         self.entropy = gaussian_entropy(log_std)
         # MISSING: reg params for log and mu
         # Apply squashing and account for it in the probability
