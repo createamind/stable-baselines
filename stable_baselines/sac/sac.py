@@ -183,10 +183,10 @@ class SAC(OffPolicyRLModel):
                     self.entropy = tf.reduce_mean(self.policy_tf.entropy)
                     #  Use two Q-functions to improve performance by reducing overestimation bias.
                     qf1, qf2, value_fn = self.policy_tf.make_critics(self.processed_obs_ph, self.actions_ph,
-                                                                     create_qf=True, create_vf=True)
+                                                                     create_qf=True, create_vf=True)  # Q(s,a)
                     qf1_pi, qf2_pi, _ = self.policy_tf.make_critics(self.processed_obs_ph,
                                                                     policy_out, create_qf=True, create_vf=False,
-                                                                    reuse=True)
+                                                                    reuse=True)  # Q(s, pi(a|s))
 
                     # Target entropy is used when learning the entropy coefficient
                     if self.target_entropy == 'auto':
