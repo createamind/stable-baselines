@@ -12,7 +12,7 @@ configure()
 class CustomSACPolicy(FeedForwardPolicy):
     def __init__(self, *args, **kwargs):
         super(CustomSACPolicy, self).__init__(*args, **kwargs,
-                                           layers=[64, 64],
+                                           layers=[256, 256],
                                            layer_norm=False,
                                            feature_extraction="mlp")
 
@@ -20,10 +20,11 @@ class CustomSACPolicy(FeedForwardPolicy):
 # env_ = gym.make('CarRacing-v0')
 
 
-env = gym.make('Pendulum-v0')
+# env = gym.make('Pendulum-v0')
+env = gym.make('LunarLanderContinuous-v2')
 env = DummyVecEnv([lambda: env])
 
-model = SAC1(CustomSACPolicy, env, learning_rate=0.001, verbose=1)
+model = SAC1(CustomSACPolicy, env, learning_rate=0.001, verbose=1, seed=2)
 # Train the agent
-model.learn(total_timesteps=int(1e5))
+model.learn(total_timesteps=int(2e6))
 

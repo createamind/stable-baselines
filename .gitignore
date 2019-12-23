@@ -18,7 +18,7 @@ _build/
 /dist/
 /build
 keys/
-
+data/
 # Virtualenv
 /env
 /venv
