@@ -289,7 +289,7 @@ class FeedForwardPolicy(SQNPolicy):
             if self.feature_extraction == "cnn":
                 critics_h = self.cnn_extractor(obs, **self.cnn_kwargs)
             else:
-                critics_h = tf.layers.flatten(obs)
+                critics_h = tf.layers.flatten(obs)   # <tf.Tensor 'model/values_fn/flatten/Reshape:0' shape=(?, 4) dtype=float32>
 
             if create_vf:
                 # Value function
@@ -300,7 +300,8 @@ class FeedForwardPolicy(SQNPolicy):
 
             if create_qf:
                 # Concatenate preprocessed state and action
-                qf_h = tf.concat([critics_h, action], axis=-1)
+                # qf_h = tf.concat([critics_h, action], axis=-1)
+                qf_h = critics_h  # compute Q(s,a) for every action
 
                 # Onehot action
 
@@ -317,41 +318,43 @@ class FeedForwardPolicy(SQNPolicy):
                     qf2_h = mlp(qf_h, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf2_ = tf.layers.dense(qf2_h, self.ac_space.n, name="qf2")
 
-                act_onehot = tf.one_hot(deterministic_policy, depth=self.ac_space.n)
-                self.qf1 = qf1_ * act_onehot
-                self.qf2 = qf2_ * act_onehot
+                act_onehot = tf.squeeze(tf.one_hot(action, depth=self.ac_space.n), axis=1)
+                self.qf1 = tf.reduce_sum(qf1_ * act_onehot, axis=1, keepdims=True)
+                self.qf2 = tf.reduce_sum(qf2_ * act_onehot, axis=1, keepdims=True)
 
-                qf_h_pi = tf.concat([critics_h, policy], axis=-1)
+                # qf_h_pi = critics_h
 
                 # Double Q values to reduce overestimation
                 with tf.variable_scope('qf1', reuse=True):
-                    qf1_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    # qf1_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf1_pi_ = tf.layers.dense(qf1_h, self.ac_space.n, name="qf1")
 
                 with tf.variable_scope('qf2', reuse=True):
-                    qf2_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    # qf2_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf2_pi_ = tf.layers.dense(qf2_h, self.ac_space.n, name="qf2")
 
-                pi_onehot = tf.one_hot(policy, depth=self.ac_space.n)
-                self.qf1_pi = qf1_pi_ * pi_onehot
-                self.qf2_pi = qf2_pi_ * pi_onehot
+                pi_onehot = tf.squeeze(tf.one_hot(policy, depth=self.ac_space.n), axis=1)
+                self.qf1_pi = tf.reduce_sum(qf1_pi_ * pi_onehot, axis=1, keepdims=True)
+                self.qf2_pi = tf.reduce_sum(qf2_pi_ * pi_onehot, axis=1, keepdims=True)
 
-        self.entropy = logp_pi
+        # self.entropy = -logp_pi
 
-        return self.qf1, self.qf2, deterministic_policy, policy, logp_pi
+        return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi
 
     def softmax_policy(self, qf1_, alpha):
 
         pi_log = tf.nn.log_softmax(qf1_ / alpha, axis=1)
-        mu = tf.argmax(pi_log, axis=1)
+        mu = tf.expand_dims(tf.argmax(pi_log, axis=1), axis=1)
 
         # tf.random.multinomial( logits, num_samples, seed=None, name=None, output_dtype=None )
         # logits: 2-D Tensor with shape [batch_size, num_classes]. Each slice [i, :] represents the unnormalized log-probabilities for all classes.
         # num_samples: 0-D. Number of independent samples to draw for each row slice.
-        pi = tf.squeeze(tf.random.multinomial(pi_log, 1), axis=1)
+        pi = tf.random.multinomial(pi_log, 1)
 
         # logp_pi = tf.reduce_sum(tf.one_hot(mu, depth=act_dim) * pi_log, axis=1)  # use max Q(s,a)
-        logp_pi = tf.reduce_sum(tf.one_hot(pi, depth=self.ac_space.n) * pi_log, axis=1)
+        pi_onehot = tf.squeeze(tf.one_hot(pi, depth=self.ac_space.n), axis=1)
+        logp_pi = tf.reduce_sum(pi_onehot * pi_log, axis=1, keepdims=True)
+        self.entropy = -tf.reduce_sum(tf.exp(pi_log)*pi_log, axis=1)
         # logp_pi = tf.reduce_sum(tf.exp(pi_log)*pi_log, axis=1)                     # exact entropy
 
         return mu, pi, logp_pi

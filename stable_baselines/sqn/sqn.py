@@ -168,7 +168,7 @@ class SQN(OffPolicyRLModel):
                     self.action_target = self.target_policy.action_ph
                     self.terminals_ph = tf.placeholder(tf.float32, shape=(None, 1), name='terminals')
                     self.rewards_ph = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
-                    self.actions_ph = tf.placeholder(tf.float32, shape=(None,) + self.action_space.n,
+                    self.actions_ph = tf.placeholder(tf.int64, shape=(None,) + (1,),
                                                      name='actions')
                     self.learning_rate_ph = tf.placeholder(tf.float32, [], name="learning_rate_ph")
 
@@ -176,7 +176,7 @@ class SQN(OffPolicyRLModel):
                     # Target entropy is used when learning the entropy coefficient
                     if self.target_entropy == 'auto':
                         # automatically set target entropy if needed
-                        self.target_entropy = -np.prod(self.env.action_space.shape).astype(np.float32)
+                        self.target_entropy = -0.1*np.prod(self.env.action_space.n).astype(np.float32)
                     else:
                         # Force conversion
                         # this will also throw an error for unexpected string
@@ -204,7 +204,7 @@ class SQN(OffPolicyRLModel):
                     qf1, qf2, qf1_pi, qf2_pi, self.deterministic_action, policy_out, logp_pi = \
                         self.policy_tf.make_actor_critics(self.processed_obs_ph, self.actions_ph,
                                                           create_qf=True, create_vf=False, alpha=self.ent_coef)
-
+                    # return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi
                     # Create the policy
                     # first return value corresponds to deterministic actions
                     # policy_out corresponds to stochastic actions, used for training
@@ -281,8 +281,8 @@ class SQN(OffPolicyRLModel):
 
                     # Policy train op
                     # (has to be separate from value train op, because min_qf_pi appears in policy_loss)
-                    policy_optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate_ph)
-                    policy_train_op = policy_optimizer.minimize(policy_loss, var_list=get_vars('model/pi'))
+                    # policy_optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate_ph)
+                    # policy_train_op = policy_optimizer.minimize(policy_loss, var_list=get_vars('model/pi'))
 
                     # Value train op
                     value_optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate_ph)
@@ -304,14 +304,14 @@ class SQN(OffPolicyRLModel):
 
                     # Control flow is used because sess.run otherwise evaluates in nondeterministic order
                     # and we first need to compute the policy action before computing q values losses
-                    with tf.control_dependencies([policy_train_op]):
-                        train_values_op = value_optimizer.minimize(values_losses, var_list=values_params)
+                    train_values_op = value_optimizer.minimize(values_losses, var_list=values_params)
+                    with tf.control_dependencies([train_values_op]):
+                        # train_values_op = value_optimizer.minimize(values_losses, var_list=values_params)
 
-                        self.infos_names = ['policy_loss', 'qf1_loss', 'qf2_loss', 'value_loss', 'entropy']
+                        self.infos_names = ['policy_loss', 'qf1_loss', 'qf2_loss', 'value_loss', 'entropy', "qf1", "qf2"]
                         # All ops to call during one training step
                         self.step_ops = [policy_loss, qf1_loss, qf2_loss, values_losses,
-                                         qf1, qf2, logp_pi,
-                                         self.entropy, policy_train_op, train_values_op]
+                                         qf1, qf2, logp_pi, train_values_op, self.entropy]
 
                         # self.step_ops = [policy_loss, qf1_loss, qf2_loss,
                         #                  value_loss, qf1, qf2, value_fn, logp_pi,
@@ -354,7 +354,7 @@ class SQN(OffPolicyRLModel):
 
         feed_dict = {
             self.observations_ph: batch_obs,
-            self.actions_ph: batch_actions,
+            self.actions_ph: batch_actions[:, None],
             self.next_observations_ph: batch_next_obs,
             self.rewards_ph: batch_rewards.reshape(self.batch_size, -1),
             self.terminals_ph: batch_dones.reshape(self.batch_size, -1),
@@ -379,13 +379,15 @@ class SQN(OffPolicyRLModel):
         # Unpack to monitor losses and entropy
         policy_loss, qf1_loss, qf2_loss, value_loss, *values = out
         # qf1, qf2, value_fn, logp_pi, entropy, *_ = values
-        entropy = values[3]
+        # self.step_ops = [policy_loss, qf1_loss, qf2_loss, values_losses,\\
+        #                  qf1, qf2, logp_pi, train_values_op, self.entropy]
+        entropy = values[4]
 
         if self.log_ent_coef is not None:
             ent_coef_loss, ent_coef = values[-2:]
             return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, ent_coef_loss, ent_coef
 
-        return policy_loss, qf1_loss, qf2_loss, value_loss, entropy
+        return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, values[0].mean(), values[1].mean()
 
     def learn(self, total_timesteps, callback=None,
               log_interval=4, tb_log_name="SAC", reset_num_timesteps=True, replay_wrapper=None):
@@ -430,20 +432,20 @@ class SQN(OffPolicyRLModel):
                 if self.num_timesteps < self.learning_starts or np.random.rand() < self.random_exploration:
                     # actions sampled from action space are from range specific to the environment
                     # but algorithm operates on tanh-squashed actions therefore simple scaling is used
-                    unscaled_action = self.env.action_space.sample()
-                    action = scale_action(self.action_space, unscaled_action)
+                    action = self.env.action_space.sample()
+                    # action = scale_action(self.action_space, unscaled_action)
                 else:
-                    action = self.policy_tf.step(obs[None], deterministic=False).flatten()
+                    action = self.policy_tf.step(obs[None], deterministic=False).flatten()[0]
                     # Add noise to the action (improve exploration,
                     # not needed in general)
                     if self.action_noise is not None:
-                        action = np.clip(action + self.action_noise(), -1, 1)
+                        action = np.clip(action + self.action_noise(), -1, 1)[0]
                     # inferred actions need to be transformed to environment action_space before stepping
-                    unscaled_action = unscale_action(self.action_space, action)
+                    # unscaled_action = unscale_action(self.action_space, action)
 
-                assert action.shape == self.env.action_space.shape
+                # assert action.shape == self.env.action_space.n
 
-                new_obs, reward, done, info = self.env.step(unscaled_action)
+                new_obs, reward, done, info = self.env.step(action)
 
                 # Store transition in the replay buffer.
                 self.replay_buffer.add(obs, action, reward, new_obs, float(done))

@@ -5,7 +5,7 @@ from stable_baselines.common.vec_env import DummyVecEnv
 from stable_baselines import SQN
 from stable_baselines.logger import configure
 
-configure()
+# configure()
 
 
 # Custom MLP policy of three layers of size 128 each
@@ -21,11 +21,11 @@ class CustomSQNPolicy(FeedForwardPolicy):
 
 
 # env = gym.make('Pendulum-v0')
-env = gym.make('CartPole-v0')
+env = gym.make('CartPole-v1')
 # env = gym.make('LunarLanderContinuous-v2')
-env = DummyVecEnv([lambda: env])
+# env = DummyVecEnv([lambda: env])
 
-model = SQN(CustomSQNPolicy, env, learning_rate=0.001, verbose=1, seed=2)
+model = SQN(CustomSQNPolicy, env, learning_rate=0.001, verbose=1, seed=2, ent_coef=0.01)
 # Train the agent
 model.learn(total_timesteps=int(1e5))
 
