@@ -12,7 +12,7 @@ from stable_baselines.common.vec_env import VecEnv
 from stable_baselines.common.math_util import unscale_action, scale_action
 from stable_baselines.deepq.replay_buffer import ReplayBuffer
 from stable_baselines.ppo2.ppo2 import safe_mean, get_schedule_fn
-from stable_baselines.sac1.policies import SACPolicy
+from stable_baselines.sqn.policies import SQNPolicy
 from stable_baselines import logger
 
 
@@ -80,7 +80,7 @@ class SQN(OffPolicyRLModel):
                  seed=None, n_cpu_tf_sess=None):
 
         super(SQN, self).__init__(policy=policy, env=env, replay_buffer=None, verbose=verbose,
-                                  policy_base=SACPolicy, requires_vec_env=False, policy_kwargs=policy_kwargs,
+                                  policy_base=SQNPolicy, requires_vec_env=False, policy_kwargs=policy_kwargs,
                                   seed=seed, n_cpu_tf_sess=n_cpu_tf_sess)
 
         self.buffer_size = buffer_size
@@ -168,27 +168,11 @@ class SQN(OffPolicyRLModel):
                     self.action_target = self.target_policy.action_ph
                     self.terminals_ph = tf.placeholder(tf.float32, shape=(None, 1), name='terminals')
                     self.rewards_ph = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
-                    self.actions_ph = tf.placeholder(tf.float32, shape=(None,) + self.action_space.shape,
+                    self.actions_ph = tf.placeholder(tf.float32, shape=(None,) + self.action_space.n,
                                                      name='actions')
                     self.learning_rate_ph = tf.placeholder(tf.float32, [], name="learning_rate_ph")
 
                 with tf.variable_scope("model", reuse=False):
-                    # Create the policy
-                    # first return value corresponds to deterministic actions
-                    # policy_out corresponds to stochastic actions, used for training
-                    # logp_pi is the log probability of actions taken by the policy
-                    self.deterministic_action, policy_out, logp_pi = self.policy_tf.make_actor(self.processed_obs_ph)
-                    _, policy_out_, logp_pi_ = self.target_policy.make_actor(self.next_observations_ph, reuse=True)  # log pi(.|s')
-                    # Monitor the entropy of the policy,
-                    # this is not used for training
-                    self.entropy = tf.reduce_mean(self.policy_tf.entropy)
-                    #  Use two Q-functions to improve performance by reducing overestimation bias.
-                    qf1, qf2, _ = self.policy_tf.make_critics(self.processed_obs_ph, self.actions_ph,
-                                                                     create_qf=True, create_vf=False)  # Q_i(s,a)
-                    qf1_pi, qf2_pi, _ = self.policy_tf.make_critics(self.processed_obs_ph,
-                                                                    policy_out, create_qf=True, create_vf=False,
-                                                                    reuse=True)  # Q_i(s, pi(a|s))
-
                     # Target entropy is used when learning the entropy coefficient
                     if self.target_entropy == 'auto':
                         # automatically set target entropy if needed
@@ -217,13 +201,39 @@ class SQN(OffPolicyRLModel):
                         # is passed
                         self.ent_coef = float(self.ent_coef)
 
+                    qf1, qf2, qf1_pi, qf2_pi, self.deterministic_action, policy_out, logp_pi = \
+                        self.policy_tf.make_actor_critics(self.processed_obs_ph, self.actions_ph,
+                                                          create_qf=True, create_vf=False, alpha=self.ent_coef)
+
+                    # Create the policy
+                    # first return value corresponds to deterministic actions
+                    # policy_out corresponds to stochastic actions, used for training
+                    # logp_pi is the log probability of actions taken by the policy
+                    # self.deterministic_action, policy_out, logp_pi = self.policy_tf.make_actor(self.processed_obs_ph)
+                    # _, policy_out_, logp_pi_ = self.target_policy.make_actor(self.next_observations_ph, reuse=True)  # log pi(.|s')
+                    # Monitor the entropy of the policy,
+                    # this is not used for training
+                    self.entropy = tf.reduce_mean(self.policy_tf.entropy)
+                    #  Use two Q-functions to improve performance by reducing overestimation bias.
+                    # qf1, qf2, _ = self.policy_tf.make_critics(self.processed_obs_ph, self.actions_ph,
+                    #                                                  create_qf=True, create_vf=False)  # Q_i(s,a)
+                    # qf1_pi, qf2_pi, _ = self.policy_tf.make_critics(self.processed_obs_ph,
+                    #                                                 policy_out, create_qf=True, create_vf=False,
+                    #                                                 reuse=True)  # Q_i(s, pi(a|s))
+
+
+
                 with tf.variable_scope("target", reuse=False):
                     # Create the value network
                     # _, _, value_target = self.target_policy.make_critics(self.processed_next_obs_ph,
                     #                                                      create_qf=False, create_vf=True)
                     # Q_i(pi(.|s'))
-                    qf1_pi_, qf2_pi_, _ = self.target_policy.make_critics(self.processed_next_obs_ph, policy_out_,
-                                                                      create_qf=True, create_vf=False, reuse=False)
+                    # qf1_pi_, qf2_pi_, _ = self.target_policy.make_critics(self.processed_next_obs_ph, policy_out_,
+                    #                                                   create_qf=True, create_vf=False, reuse=False)
+
+                    qf1_, qf2_, qf1_pi_, qf2_pi_, _, _, logp_pi_ = \
+                        self.policy_tf.make_actor_critics(self.processed_obs_ph, self.actions_ph,
+                                                          create_qf=True, create_vf=False, alpha=self.ent_coef)
 
                     # self.value_target = value_target
                     # self.value_target =

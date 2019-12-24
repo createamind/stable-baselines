@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from gym.spaces import Box
+from gym.spaces import Box,Discrete
 
 from stable_baselines.common.policies import BasePolicy, nature_cnn, register_policy
 
@@ -82,7 +82,7 @@ def apply_squashing_func(mu_, pi_, logp_pi):
     return deterministic_policy, policy, logp_pi
 
 
-class SACPolicy(BasePolicy):
+class SQNPolicy(BasePolicy):
     """
     Policy object that implements a SAC-like actor critic
 
@@ -97,8 +97,8 @@ class SACPolicy(BasePolicy):
     """
 
     def __init__(self, sess, ob_space, ac_space, n_env=1, n_steps=1, n_batch=None, reuse=False, scale=False):
-        super(SACPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=reuse, scale=scale)
-        assert isinstance(ac_space, Box), "Error: the action space must be of type gym.spaces.Box"
+        super(SQNPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=reuse, scale=scale)
+        assert isinstance(ac_space, Discrete), "Error: the action space must be of type gym.spaces.Discrete"
 
         self.qf1 = None
         self.qf2 = None
@@ -158,7 +158,7 @@ class SACPolicy(BasePolicy):
         raise NotImplementedError
 
 
-class FeedForwardPolicy(SACPolicy):
+class FeedForwardPolicy(SQNPolicy):
     """
     Policy object that implements a DDPG-like actor critic, using a feed forward neural network.
 
@@ -196,6 +196,8 @@ class FeedForwardPolicy(SACPolicy):
         self.reg_loss = None
         self.reg_weight = reg_weight
         self.entropy = None
+        self.qf1_pi = None
+        self.qf2_pi = None
 
         assert len(layers) >= 1, "Error: must have at least one hidden layer for the policy."
 
@@ -277,6 +279,82 @@ class FeedForwardPolicy(SACPolicy):
                 self.qf2 = qf2
 
         return self.qf1, self.qf2, self.value_fn
+
+    def make_actor_critics(self, obs=None, action=None, reuse=False, scope="values_fn",
+                     create_vf=True, create_qf=True, alpha=None):
+        if obs is None:
+            obs = self.processed_obs
+
+        with tf.variable_scope(scope, reuse=reuse):
+            if self.feature_extraction == "cnn":
+                critics_h = self.cnn_extractor(obs, **self.cnn_kwargs)
+            else:
+                critics_h = tf.layers.flatten(obs)
+
+            if create_vf:
+                # Value function
+                with tf.variable_scope('vf', reuse=reuse):
+                    vf_h = mlp(critics_h, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    value_fn = tf.layers.dense(vf_h, 1, name="vf")
+                self.value_fn = value_fn
+
+            if create_qf:
+                # Concatenate preprocessed state and action
+                qf_h = tf.concat([critics_h, action], axis=-1)
+
+                # Onehot action
+
+
+                # Double Q values to reduce overestimation
+                with tf.variable_scope('qf1', reuse=reuse):
+                    qf1_h = mlp(qf_h, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    qf1_ = tf.layers.dense(qf1_h, self.ac_space.n, name="qf1")
+                    deterministic_policy, policy, logp_pi = self.softmax_policy(qf1_, alpha)
+                    self.policy = policy
+                    self.deterministic_policy = deterministic_policy
+
+                with tf.variable_scope('qf2', reuse=reuse):
+                    qf2_h = mlp(qf_h, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    qf2_ = tf.layers.dense(qf2_h, self.ac_space.n, name="qf2")
+
+                act_onehot = tf.one_hot(deterministic_policy, depth=self.ac_space.n)
+                self.qf1 = qf1_ * act_onehot
+                self.qf2 = qf2_ * act_onehot
+
+                qf_h_pi = tf.concat([critics_h, policy], axis=-1)
+
+                # Double Q values to reduce overestimation
+                with tf.variable_scope('qf1', reuse=True):
+                    qf1_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    qf1_pi_ = tf.layers.dense(qf1_h, self.ac_space.n, name="qf1")
+
+                with tf.variable_scope('qf2', reuse=True):
+                    qf2_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    qf2_pi_ = tf.layers.dense(qf2_h, self.ac_space.n, name="qf2")
+
+                pi_onehot = tf.one_hot(policy, depth=self.ac_space.n)
+                self.qf1_pi = qf1_pi_ * pi_onehot
+                self.qf2_pi = qf2_pi_ * pi_onehot
+
+        self.entropy = logp_pi
+
+        return self.qf1, self.qf2, deterministic_policy, policy, logp_pi
+
+    def softmax_policy(self, qf1_, alpha):
+
+        pi_log = tf.nn.log_softmax(qf1_ / alpha, axis=1)
+        mu = tf.argmax(pi_log, axis=1)
+
+        # tf.random.multinomial( logits, num_samples, seed=None, name=None, output_dtype=None )
+        # logits: 2-D Tensor with shape [batch_size, num_classes]. Each slice [i, :] represents the unnormalized log-probabilities for all classes.
+        # num_samples: 0-D. Number of independent samples to draw for each row slice.
+        pi = tf.squeeze(tf.random.multinomial(pi_log, 1), axis=1)
+
+        # logp_pi = tf.reduce_sum(tf.one_hot(mu, depth=act_dim) * pi_log, axis=1)  # use max Q(s,a)
+        logp_pi = tf.reduce_sum(tf.one_hot(pi, depth=self.ac_space.n) * pi_log, axis=1)
+        # logp_pi = tf.reduce_sum(tf.exp(pi_log)*pi_log, axis=1)                     # exact entropy
+
+        return mu, pi, logp_pi
 
     def step(self, obs, state=None, mask=None, deterministic=False):
         if deterministic:
