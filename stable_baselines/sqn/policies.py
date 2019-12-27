@@ -325,7 +325,7 @@ class FeedForwardPolicy(SQNPolicy):
 
                 qf_h_pi = critics_h
 
-                # Double Q values to reduce overestimation
+                # Q_pi
                 with tf.variable_scope('qf1', reuse=True):
                     qf1_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf1_pi_ = tf.layers.dense(qf1_h, self.ac_space.n, name="qf1")
@@ -340,13 +340,13 @@ class FeedForwardPolicy(SQNPolicy):
 
     def softmax_policy(self, qf1_, alpha):
 
-        pi_log = tf.nn.log_softmax(qf1_ / alpha, axis=1)
-        mu = tf.expand_dims(tf.argmax(pi_log, axis=1), axis=1)
+        pi_log = tf.nn.log_softmax(qf1_ / alpha, axis=1)   # 'model/values_fn/qf1/LogSoftmax:0' shape=(?, 2)
+        mu = tf.expand_dims(tf.argmax(pi_log, axis=1), axis=1)   # 'model/values_fn/qf1/ExpandDims:0' shape=(?, 1)
 
         # tf.random.multinomial( logits, num_samples, seed=None, name=None, output_dtype=None )
         # logits: 2-D Tensor with shape [batch_size, num_classes]. Each slice [i, :] represents the unnormalized log-probabilities for all classes.
         # num_samples: 0-D. Number of independent samples to draw for each row slice.
-        pi = tf.random.multinomial(pi_log, 1)
+        pi = tf.random.multinomial(pi_log, 1)    # 'model/values_fn/qf1/multinomial/Multinomial:0' shape=(?, 1)
         # pi = mu
 
         # logp_pi = tf.reduce_sum(tf.one_hot(mu, depth=act_dim) * pi_log, axis=1)  # use max Q(s,a)

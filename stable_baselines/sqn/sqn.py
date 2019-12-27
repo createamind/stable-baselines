@@ -232,7 +232,7 @@ class SQN(OffPolicyRLModel):
                     #                                                   create_qf=True, create_vf=False, reuse=False)
 
                     _, _, qf1_pi_, qf2_pi_, _, _, logp_pi_, _ = \
-                        self.target_policy.make_actor_critics(self.processed_obs_ph, self.actions_ph,
+                        self.target_policy.make_actor_critics(self.processed_next_obs_ph, self.actions_ph,
                                                           create_qf=True, create_vf=False, alpha=self.ent_coef)
 
                     # self.value_target = value_target
