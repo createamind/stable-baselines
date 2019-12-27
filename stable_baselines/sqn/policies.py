@@ -304,42 +304,39 @@ class FeedForwardPolicy(SQNPolicy):
                 qf_h = critics_h  # compute Q(s,a) for every action
 
                 # Onehot action
-
-
                 # Double Q values to reduce overestimation
                 with tf.variable_scope('qf1', reuse=reuse):
                     qf1_h = mlp(qf_h, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf1_ = tf.layers.dense(qf1_h, self.ac_space.n, name="qf1")
                     deterministic_policy, policy, logp_pi = self.softmax_policy(qf1_, alpha)
+
+
+
                     self.policy = policy
                     self.deterministic_policy = deterministic_policy
+                    pi_onehot = tf.squeeze(tf.one_hot(policy, depth=self.ac_space.n), axis=1)
+                    act_onehot = tf.squeeze(tf.one_hot(action, depth=self.ac_space.n), axis=1)
+                    self.qf1 = tf.reduce_sum(qf1_ * act_onehot, axis=1, keepdims=True)
 
                 with tf.variable_scope('qf2', reuse=reuse):
                     qf2_h = mlp(qf_h, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf2_ = tf.layers.dense(qf2_h, self.ac_space.n, name="qf2")
+                    self.qf2 = tf.reduce_sum(qf2_ * act_onehot, axis=1, keepdims=True)
 
-                act_onehot = tf.squeeze(tf.one_hot(action, depth=self.ac_space.n), axis=1)
-                self.qf1 = tf.reduce_sum(qf1_ * act_onehot, axis=1, keepdims=True)
-                self.qf2 = tf.reduce_sum(qf2_ * act_onehot, axis=1, keepdims=True)
-
-                # qf_h_pi = critics_h
+                qf_h_pi = critics_h
 
                 # Double Q values to reduce overestimation
                 with tf.variable_scope('qf1', reuse=True):
-                    # qf1_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    qf1_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf1_pi_ = tf.layers.dense(qf1_h, self.ac_space.n, name="qf1")
+                    self.qf1_pi = tf.reduce_sum(qf1_pi_ * pi_onehot, axis=1, keepdims=True)
 
                 with tf.variable_scope('qf2', reuse=True):
-                    # qf2_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
+                    qf2_h = mlp(qf_h_pi, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf2_pi_ = tf.layers.dense(qf2_h, self.ac_space.n, name="qf2")
+                    self.qf2_pi = tf.reduce_sum(qf2_pi_ * pi_onehot, axis=1, keepdims=True)
 
-                pi_onehot = tf.squeeze(tf.one_hot(policy, depth=self.ac_space.n), axis=1)
-                self.qf1_pi = tf.reduce_sum(qf1_pi_ * pi_onehot, axis=1, keepdims=True)
-                self.qf2_pi = tf.reduce_sum(qf2_pi_ * pi_onehot, axis=1, keepdims=True)
-
-        # self.entropy = -logp_pi
-
-        return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi
+        return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi, qf1_
 
     def softmax_policy(self, qf1_, alpha):
 
@@ -350,6 +347,7 @@ class FeedForwardPolicy(SQNPolicy):
         # logits: 2-D Tensor with shape [batch_size, num_classes]. Each slice [i, :] represents the unnormalized log-probabilities for all classes.
         # num_samples: 0-D. Number of independent samples to draw for each row slice.
         pi = tf.random.multinomial(pi_log, 1)
+        # pi = mu
 
         # logp_pi = tf.reduce_sum(tf.one_hot(mu, depth=act_dim) * pi_log, axis=1)  # use max Q(s,a)
         pi_onehot = tf.squeeze(tf.one_hot(pi, depth=self.ac_space.n), axis=1)

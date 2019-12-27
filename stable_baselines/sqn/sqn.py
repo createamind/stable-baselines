@@ -201,7 +201,7 @@ class SQN(OffPolicyRLModel):
                         # is passed
                         self.ent_coef = float(self.ent_coef)
 
-                    qf1, qf2, qf1_pi, qf2_pi, self.deterministic_action, policy_out, logp_pi = \
+                    qf1, qf2, qf1_pi, _, self.deterministic_action, policy_out, logp_pi, qf1_ = \
                         self.policy_tf.make_actor_critics(self.processed_obs_ph, self.actions_ph,
                                                           create_qf=True, create_vf=False, alpha=self.ent_coef)
                     # return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi
@@ -231,8 +231,8 @@ class SQN(OffPolicyRLModel):
                     # qf1_pi_, qf2_pi_, _ = self.target_policy.make_critics(self.processed_next_obs_ph, policy_out_,
                     #                                                   create_qf=True, create_vf=False, reuse=False)
 
-                    qf1_, qf2_, qf1_pi_, qf2_pi_, _, _, logp_pi_ = \
-                        self.policy_tf.make_actor_critics(self.processed_obs_ph, self.actions_ph,
+                    _, _, qf1_pi_, qf2_pi_, _, _, logp_pi_, _ = \
+                        self.target_policy.make_actor_critics(self.processed_obs_ph, self.actions_ph,
                                                           create_qf=True, create_vf=False, alpha=self.ent_coef)
 
                     # self.value_target = value_target
@@ -308,10 +308,11 @@ class SQN(OffPolicyRLModel):
                     with tf.control_dependencies([train_values_op]):
                         # train_values_op = value_optimizer.minimize(values_losses, var_list=values_params)
 
-                        self.infos_names = ['policy_loss', 'qf1_loss', 'qf2_loss', 'value_loss', 'entropy', "qf1", "qf2"]
+                        self.infos_names = ['policy_loss', 'qf1_loss', 'qf2_loss', 'value_loss',
+                                            'entropy', "qf1", "qf2", "logp_pi", "qf1_"]
                         # All ops to call during one training step
                         self.step_ops = [policy_loss, qf1_loss, qf2_loss, values_losses,
-                                         qf1, qf2, logp_pi, train_values_op, self.entropy]
+                                         qf1, qf2, logp_pi, train_values_op, self.entropy, qf1_]
 
                         # self.step_ops = [policy_loss, qf1_loss, qf2_loss,
                         #                  value_loss, qf1, qf2, value_fn, logp_pi,
@@ -319,10 +320,10 @@ class SQN(OffPolicyRLModel):
 
                         # Add entropy coefficient optimization operation if needed
                         if ent_coef_loss is not None:
-                            with tf.control_dependencies([train_values_op]):
-                                ent_coef_op = entropy_optimizer.minimize(ent_coef_loss, var_list=self.log_ent_coef)
-                                self.infos_names += ['ent_coef_loss', 'ent_coef']
-                                self.step_ops += [ent_coef_op, ent_coef_loss, self.ent_coef]
+                            # with tf.control_dependencies([train_values_op]):
+                            ent_coef_op = entropy_optimizer.minimize(ent_coef_loss, var_list=self.log_ent_coef)
+                            self.infos_names += ['ent_coef_loss', 'ent_coef']
+                            self.step_ops += [ent_coef_op, ent_coef_loss, self.ent_coef]
 
                     # Monitor losses and entropy in tensorboard
                     tf.summary.scalar('policy_loss', policy_loss)
@@ -354,7 +355,8 @@ class SQN(OffPolicyRLModel):
 
         feed_dict = {
             self.observations_ph: batch_obs,
-            self.actions_ph: batch_actions[:, None],
+            # self.actions_ph: batch_actions[:, None],
+            self.actions_ph: batch_actions.reshape(self.batch_size, -1),
             self.next_observations_ph: batch_next_obs,
             self.rewards_ph: batch_rewards.reshape(self.batch_size, -1),
             self.terminals_ph: batch_dones.reshape(self.batch_size, -1),
@@ -387,7 +389,8 @@ class SQN(OffPolicyRLModel):
             ent_coef_loss, ent_coef = values[-2:]
             return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, ent_coef_loss, ent_coef
 
-        return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, values[0].mean(), values[1].mean()
+        return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, values[0].mean(), \
+               values[1].mean(), values[2].mean(), np.mean(np.abs(values[-1][:, 0] - values[-1][:, 1]))
 
     def learn(self, total_timesteps, callback=None,
               log_interval=4, tb_log_name="SAC", reset_num_timesteps=True, replay_wrapper=None):

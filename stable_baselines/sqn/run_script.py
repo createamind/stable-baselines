@@ -21,11 +21,11 @@ class CustomSQNPolicy(FeedForwardPolicy):
 
 
 # env = gym.make('Pendulum-v0')
-env = gym.make('CartPole-v1')
-# env = gym.make('LunarLanderContinuous-v2')
+env = gym.make('CartPole-v0')
+# env = gym.make('LunarLander-v2')
 # env = DummyVecEnv([lambda: env])
 
-model = SQN(CustomSQNPolicy, env, learning_rate=0.001, verbose=1, seed=2, ent_coef=0.01)
+model = SQN(CustomSQNPolicy, env, learning_rate=0.001, verbose=1, seed=2, ent_coef=0.2, tensorboard_log="./")
 # Train the agent
 model.learn(total_timesteps=int(1e5))
 

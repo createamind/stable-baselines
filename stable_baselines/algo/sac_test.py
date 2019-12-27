@@ -20,6 +20,6 @@ env = gym.make('LunarLanderContinuous-v2')
 # env = gym.make('Pendulum-v0')
 env = DummyVecEnv([lambda: env])
 
-model = SAC(CustomSACPolicy, env, verbose=1, seed=2, learning_rate=0.001)
+model = SAC(CustomSACPolicy, env, verbose=1, seed=2, learning_rate=0.001, tensorboard_log="./")
 # Train the agent
 model.learn(total_timesteps=int(2e6))

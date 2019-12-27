@@ -5,7 +5,7 @@ from stable_baselines.common.vec_env import DummyVecEnv
 from stable_baselines import SAC1
 from stable_baselines.logger import configure
 
-configure()
+# configure()
 
 
 # Custom MLP policy of three layers of size 128 each
@@ -24,7 +24,7 @@ class CustomSACPolicy(FeedForwardPolicy):
 env = gym.make('LunarLanderContinuous-v2')
 env = DummyVecEnv([lambda: env])
 
-model = SAC1(CustomSACPolicy, env, learning_rate=0.001, verbose=1, seed=2)
+model = SAC1(CustomSACPolicy, env, learning_rate=0.001, verbose=1, seed=2, tensorboard_log="./")
 # Train the agent
 model.learn(total_timesteps=int(2e6))
 
