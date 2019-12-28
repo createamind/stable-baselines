@@ -309,9 +309,6 @@ class FeedForwardPolicy(SQNPolicy):
                     qf1_h = mlp(qf_h, self.layers, self.activ_fn, layer_norm=self.layer_norm)
                     qf1_ = tf.layers.dense(qf1_h, self.ac_space.n, name="qf1")
                     deterministic_policy, policy, logp_pi = self.softmax_policy(qf1_, alpha)
-
-
-
                     self.policy = policy
                     self.deterministic_policy = deterministic_policy
                     pi_onehot = tf.squeeze(tf.one_hot(policy, depth=self.ac_space.n), axis=1)
@@ -336,7 +333,7 @@ class FeedForwardPolicy(SQNPolicy):
                     qf2_pi_ = tf.layers.dense(qf2_h, self.ac_space.n, name="qf2")
                     self.qf2_pi = tf.reduce_sum(qf2_pi_ * pi_onehot, axis=1, keepdims=True)
 
-        return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi, qf1_
+        return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi
 
     def softmax_policy(self, qf1_, alpha):
 

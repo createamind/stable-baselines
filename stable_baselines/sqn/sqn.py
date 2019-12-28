@@ -176,7 +176,7 @@ class SQN(OffPolicyRLModel):
                     # Target entropy is used when learning the entropy coefficient
                     if self.target_entropy == 'auto':
                         # automatically set target entropy if needed
-                        self.target_entropy = -0.1*np.prod(self.env.action_space.n).astype(np.float32)
+                        self.target_entropy = 0.1*np.prod(self.env.action_space.n).astype(np.float32)
                     else:
                         # Force conversion
                         # this will also throw an error for unexpected string
@@ -201,7 +201,7 @@ class SQN(OffPolicyRLModel):
                         # is passed
                         self.ent_coef = float(self.ent_coef)
 
-                    qf1, qf2, qf1_pi, _, self.deterministic_action, policy_out, logp_pi, qf1_ = \
+                    qf1, qf2, qf1_pi, _, self.deterministic_action, policy_out, logp_pi = \
                         self.policy_tf.make_actor_critics(self.processed_obs_ph, self.actions_ph,
                                                           create_qf=True, create_vf=False, alpha=self.ent_coef)
                     # return self.qf1, self.qf2, self.qf1_pi, self.qf2_pi, deterministic_policy, policy, logp_pi
@@ -231,7 +231,7 @@ class SQN(OffPolicyRLModel):
                     # qf1_pi_, qf2_pi_, _ = self.target_policy.make_critics(self.processed_next_obs_ph, policy_out_,
                     #                                                   create_qf=True, create_vf=False, reuse=False)
 
-                    _, _, qf1_pi_, qf2_pi_, _, _, logp_pi_, _ = \
+                    _, _, qf1_pi_, qf2_pi_, _, _, logp_pi_ = \
                         self.target_policy.make_actor_critics(self.processed_next_obs_ph, self.actions_ph,
                                                           create_qf=True, create_vf=False, alpha=self.ent_coef)
 
@@ -309,10 +309,10 @@ class SQN(OffPolicyRLModel):
                         # train_values_op = value_optimizer.minimize(values_losses, var_list=values_params)
 
                         self.infos_names = ['policy_loss', 'qf1_loss', 'qf2_loss', 'value_loss',
-                                            'entropy', "qf1", "qf2", "logp_pi", "qf1_"]
+                                            'entropy', "qf1", "qf2", "logp_pi"]
                         # All ops to call during one training step
                         self.step_ops = [policy_loss, qf1_loss, qf2_loss, values_losses,
-                                         qf1, qf2, logp_pi, train_values_op, self.entropy, qf1_]
+                                         qf1, qf2, logp_pi, train_values_op, self.entropy]
 
                         # self.step_ops = [policy_loss, qf1_loss, qf2_loss,
                         #                  value_loss, qf1, qf2, value_fn, logp_pi,
@@ -387,10 +387,12 @@ class SQN(OffPolicyRLModel):
 
         if self.log_ent_coef is not None:
             ent_coef_loss, ent_coef = values[-2:]
-            return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, ent_coef_loss, ent_coef
+            # return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, ent_coef_loss, ent_coef
+            return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, values[0].mean(), \
+               values[1].mean(), values[2].mean(), ent_coef_loss, ent_coef
 
         return policy_loss, qf1_loss, qf2_loss, value_loss, entropy, values[0].mean(), \
-               values[1].mean(), values[2].mean(), np.mean(np.abs(values[-1][:, 0] - values[-1][:, 1]))
+               values[1].mean(), values[2].mean()
 
     def learn(self, total_timesteps, callback=None,
               log_interval=4, tb_log_name="SAC", reset_num_timesteps=True, replay_wrapper=None):
